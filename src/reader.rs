@@ -3,7 +3,7 @@ use crate::mal_types::{MalResult, MalType, MalErr};
 
 #[derive(Debug)]
 #[derive(PartialEq)]
-pub enum Token {
+pub enum TokenKind {
   Ilegal,
   Eof,
   Equal,
@@ -17,143 +17,193 @@ pub enum Token {
   Rparen,
   Lbracket,
   Rbracket,
-  String(String),
-  Number(f64),
-  Bool(bool),
-  Ident(String),
-  Nil
+  String,
+  Number,
+  Bool,
+  Ident,
+  Nil,
+  EOF,
+  Illegal
 }
 
+#[derive(Debug)]
+pub struct Token {
+  kind: TokenKind,
+  value: Option<String>
+}
+impl Token {
+    fn new(kind: TokenKind, value: Option<String>) -> Token {
+        Self { kind, value }
+    }
+}
+
+impl PartialEq for Token {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
 
 pub struct Lexer {
-  input: String,
+  input: Vec<u8>,
   pos: usize,
-  rpos: usize,
-  ch: u8
+  read_pos: usize,
+  curr_ch: u8,
 }
 
 impl Lexer {
   pub fn new(input: String) -> Self {
-    let mut lex: Lexer = Self { input, pos: 0, rpos: 0, ch: 0 };
-    lex.read_char();
-    lex
+      let mut lex = Self {
+          input: input.into_bytes(),
+          pos: 0,
+          read_pos: 0,
+          curr_ch: 0,
+      };
+      lex.read_ch();
+      lex
   }
-
-  fn read_char(&mut self) {
-    if self.rpos >= self.input.len() {
-      self.ch = 0;
-    } else {
-        self.ch = *self.input.as_bytes().get(self.rpos).unwrap();
-    }
-    self.pos = self.rpos;
-    self.rpos += 1;
+  pub fn read_ch(&mut self) {
+      if self.read_pos >= self.input.len() {
+          self.curr_ch = 0
+      } else {
+          self.curr_ch = self.input[self.read_pos]
+      }
+      self.pos = self.read_pos;
+      self.read_pos += 1;
   }
-
-  fn next_token(&mut self) -> Token {
-    self.skip_whitspace();
-    let tok: Token = match self.ch {
-        b'=' => Token::Equal,
-        b',' => Token::Comma,
-        b'+' => Token::Plus,
-        b'-' => Token::Minus,
-        b'*' => Token::Star,
-        b'/' => Token::Slash,
-        b';' => {
-          self.read_comment();
-          Token::Nil
-        },
-        b'(' => Token::Lparen,
-        b'[' => Token::Lbracket,
-        b')' => Token::Rparen,
-        b']' => Token::Rbracket,
-        b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
-          let ident = self.read_ident();
-          match ident.as_str() {
-              "false" => Token::Bool(false),
-              "true" => Token::Bool(true),
-              "nil" => Token::Nil,
-              _ => Token::Ident(ident)
+  pub fn peek_ch(&mut self) -> u8 {
+      if self.read_pos >= self.input.len() {
+          return 0;
+      } else {
+          return self.input[self.read_pos];
+      }
+  }
+  pub fn skip_whitespace(&mut self) {
+      loop {
+          if !matches!(self.curr_ch, b' ' | b'\t' | b'\n' | b'\r') {
+              break;
           }
-        }
-        b'0'..=b'9' => Token::Number(self.read_int()),
-        0 => Token::Eof,
-        _ => Token::Ilegal
-    };
-    tok
+          self.read_ch()
+      }
   }
 
-  fn read_int(&mut self) -> f64 {
-    let pos: usize = self.pos;
-    while self.is_digit() || self.ch == b'.' {
-        self.read_char();
-    }
-    self.rpos -= 1;
-    self.input
-    .get(pos..self.pos).unwrap()
-    .parse::<f64>().unwrap()
+  fn keyword_or_identifier(&mut self) -> Token {
+      let pos = self.pos;
+      loop {
+          if matches!(self.curr_ch, b'a'..=b'z' | b'A'..=b'Z' | b'_') {
+              self.read_ch(); continue;
+          }
+          break;
+      }
+      let s = String::from_utf8_lossy(&self.input[pos..self.pos]).into_owned();
+      match s.len() {
+          // 2 => {
+          //     match s.as_str() {
+          //         //"fn" => Token::new(TokenKind::Function, s),
+          //         //"if" => Token::new(TokenKind::If, s),
+          //         _ => Token::new(TokenKind::Ident, Some(s))
+          //     }
+          // }
+          // 3 => {
+          //     match s.as_str() {
+          //         //"let" => Token::new(TokenKind::Let, s),
+          //         _ => Token::new(TokenKind::Ident, s)
+          //     }
+          // }
+          // 4 => {
+          //     match s.as_str() {
+          //         //"else" => Token::new(TokenKind::Else, s),
+          //         //"true" => Token::new(TokenKind::True, s),
+          //         _ => Token::new(TokenKind::Ident, s)
+          //     }
+          // }
+          // 5 => {
+          //     match s.as_str() {
+          //         //"false" => Token::new(TokenKind::False, s),
+          //         _ => Token::new(TokenKind::Ident, s)
+          //     }
+          // }
+          // 6 => {
+          //     match s.as_str() {
+          //         //"return" => Token::new(TokenKind::Return, s),
+          //         _ => Token::new(TokenKind::Ident, s)
+          //     }
+          // }
+
+          _ => Token::new(TokenKind::Ident, Some(s))
+      }
   }
 
-  fn read_ident(&mut self) -> String {
-    let pos: usize = self.pos;
-    while self.is_letter() {
-        self.read_char()
-    }
-    self.rpos -= 1;
-    self.input
-    .get(pos..self.pos)
-    .unwrap().to_string()
+  pub fn next_token(&mut self) -> Token {
+      self.skip_whitespace();
+      let tok: Token =
+      match self.curr_ch {
+          b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
+              self.keyword_or_identifier()
+          }
+          b'0'..=b'9' => {
+              self.number()
+          }
+          b'=' => Token::new(TokenKind::Equal, None),
+          // b'!' => {
+          //     if self.peek_ch() == b'=' {
+          //         Token::new(TokenKind::NotEqual, "==".to_string())
+          //     } else {
+          //         Token::new(TokenKind::Bang, "=".to_string())
+          //     }
+          // }
+          b'+' => Token::new(TokenKind::Plus, None),
+          b'-' => Token::new(TokenKind::Minus, None),
+          b'/' => Token::new(TokenKind::Slash, None),
+          b'*' => Token::new(TokenKind::Star, None),
+          //b'<' => Token::new(TokenKind::LessThan, None),
+          //b'>' => Token::new(TokenKind::GreaterThan, None),
+          //b';' => Token::new(TokenKind::SemiColon, None),
+          b',' => Token::new(TokenKind::Comma, None),
+          b'(' => Token::new(TokenKind::Lparen, None),
+          b')' => Token::new(TokenKind::Rparen, None),
+          b'{' => Token::new(TokenKind::Lbracket, None),
+          b'}' => Token::new(TokenKind::Rbracket, None),
+          0 => Token::new(TokenKind::EOF, None),
+          _ => {
+              Token::new(TokenKind::Illegal, Some(self.curr_ch.to_string()))
+          }
+      };
+      self.read_ch();
+      tok
   }
 
-  fn read_comment(&mut self) {
-    let pos: usize = self.pos;
-    while !(self.ch == b'\n' || self.ch == b'\t' || self.ch == b'\r' || self.ch == 0) {
-        self.read_char()
-    }
-    self.rpos -= 1;
-  }
-  fn skip_whitspace(&mut self) {
-    while self.ch == b'\n' || self.ch == b' ' || self.ch == b'\t' || self.ch == b'\r' {
-        self.read_char();
-    }
-  }
-
-  fn is_letter(&self) -> bool {
-    (b'a'..=b'z').contains(&self.ch) || (b'A'..=b'Z').contains(&self.ch) || self.ch == b'_'
-  }
-
-  fn is_digit(&self) -> bool {
-    b'0' <= self.ch && self.ch <= b'9'
+  fn number(&mut self) -> Token {
+      let pos: usize = self.pos;
+      while matches!(self.curr_ch, b'0'..=b'9') {
+          self.read_ch();
+      }
+      self.read_pos -= 1;
+      Token::new(TokenKind::Number, Some(String::from_utf8_lossy(&self.input[pos..self.pos]).into_owned()))
   }
 
 }
 
-// b'a'..=b'z' | b'A'..=b'Z' | b'_'
-// b'0'..=b'9'
-
-
 impl Iterator for Lexer {
     type Item = Token;
+
     fn next(&mut self) -> Option<Self::Item> {
-        //println!("ch antes next token: {}",self.ch);
-        let curr = self.next_token();
-        if curr == Token::Eof { return None; }
-        //println!("ch depois next token: {}",self.ch);
-        self.read_char();
-        return Some(curr);
+        let tok = self.next_token();
+        if tok.kind == TokenKind::Eof { return None; }
+        return Some(tok);
     }
 }
 
 
 pub fn read_str(s: String) -> MalResult {
-    let mut reader: Peekable<Lexer> = Lexer::new(s).peekable();
+    let mut reader = Lexer::new(s).peekable();
     read_form(&mut reader)
 }
 
 fn read_form(r: &mut Peekable<Lexer>) -> MalResult {
     match r.peek() {
         Some(t) => {
-            match *t {
-                Token::Lparen => read_list(r),
+            match t.kind {
+                TokenKind::Lparen => read_list(r),
                 _ => read_atom(r)
             }
             
@@ -168,8 +218,8 @@ fn read_list(r: &mut Peekable<Lexer>) -> MalResult {
     loop {
         match r.peek() {
             Some(t) => {
-                match t {
-                    Token::Rparen => break,
+                match t.kind {
+                    TokenKind::Rparen => break,
                     _ => ()
                 }
             },
@@ -187,16 +237,9 @@ fn read_list(r: &mut Peekable<Lexer>) -> MalResult {
 fn read_atom(r: &mut Peekable<Lexer>) -> MalResult {
     match r.next() {
         Some(t) => {
-            match t {
-                Token::Ident(s) => Ok(MalType::Symbol(Rc::from_iter(s.bytes()))),
-                Token::Equal => Ok(MalType::Symbol(Rc::from_iter("=".bytes()))),
-                Token::Plus => Ok(MalType::Symbol(Rc::from_iter("+".bytes()))),
-                Token::Minus => Ok(MalType::Symbol(Rc::from_iter("-".bytes()))),
-                Token::Star => Ok(MalType::Symbol(Rc::from_iter("*".bytes()))),
-                Token::Slash => Ok(MalType::Symbol(Rc::from_iter("/".bytes()))),
-                Token::Number(n) => Ok(MalType::Number(n)),
-                Token::Bool(b) => Ok(MalType::Bool(b)),
-                Token::Nil => Ok(MalType::Nil),
+            match t.kind {
+                TokenKind::Ident => Ok(MalType::Symbol(Rc::from_iter(t.value.unwrap().bytes()))),
+                TokenKind::Nil => Ok(MalType::Nil),
                 _ => Err(MalErr),
             }
         },
@@ -206,7 +249,7 @@ fn read_atom(r: &mut Peekable<Lexer>) -> MalResult {
 
 #[cfg(test)]
 mod tests {
-    use crate::reader::{Token, Lexer};
+    use crate::reader::{Token, Lexer, TokenKind};
 
     use super::read_str;
 
@@ -214,17 +257,18 @@ mod tests {
     fn it_works() {
         let line = String::from("(");
         let mut lex = Lexer::new(line);
-        assert_eq!(Some(Token::Lparen),lex.next());
-        assert_eq!(None,lex.next());
+        assert_eq!(Some(Token {kind: TokenKind::Lparen, value: None}),lex.next());
+        println!("{:?}", lex.next());
+        println!("{:?}", lex.next());
     }
 
     #[test]
     fn test_lex() {
       let ipt = String::from("(1)");
       let mut lex = Lexer::new(ipt);
-      assert_eq!(Some(Token::Lparen),lex.next());
-      assert_eq!(Some(Token::Number(1.0)),lex.next());
-      assert_eq!(Some(Token::Rparen),lex.next());
+      assert_eq!(Some(Token {kind: TokenKind::Lparen, value: None}),lex.next());
+      assert_eq!(Some(Token {kind: TokenKind::Number, value: Some("1".to_string())}), lex.next());
+      assert_eq!(Some(Token {kind: TokenKind::Rparen, value: None}),lex.next());
 
     }
     #[test]
