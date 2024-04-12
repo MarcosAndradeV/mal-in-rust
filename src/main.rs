@@ -18,7 +18,7 @@ fn eval(s: MalResult) -> MalResult {s}
 fn print(s: MalResult) -> String {
     match s {
         Ok(ok) => pr_str(ok),
-        Err(e) => String::from("Error"),
+        Err(e) => format!("{}", e.0),
     }
     
 }

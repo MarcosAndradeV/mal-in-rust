@@ -1,35 +1,38 @@
+use core::fmt;
 use std::{iter::Peekable, rc::Rc};
 use crate::mal_types::{MalResult, MalType, MalErr};
 
 #[derive(Debug)]
 #[derive(PartialEq)]
 pub enum TokenKind {
-  Ilegal,
-  Eof,
-  Equal,
-  Plus,
-  Minus,
-  Star,
-  Slash,
-  Comma,
-  Semicolon,
-  Lparen,
-  Rparen,
-  Lbracket,
-  Rbracket,
-  String,
-  Number,
-  Bool,
-  Ident,
-  Nil,
-  EOF,
-  Illegal
+    Colon,
+    Lparen,
+    Rparen,
+    Lbracket,
+    Rbracket,
+    String,
+    Number,
+    Bool,
+    Symbol,
+    Nil,
+    EOF,
+    Ilegal,
 }
 
 #[derive(Debug)]
 pub struct Token {
   kind: TokenKind,
   value: Option<String>
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(s) = &self.value {
+            write!(f, "{:?}({})", self.kind, s)
+        } else {
+            write!(f, "{:?}", self.kind)
+        }
+    }
 }
 impl Token {
     fn new(kind: TokenKind, value: Option<String>) -> Token {
@@ -85,6 +88,14 @@ impl Lexer {
           self.read_ch()
       }
   }
+  pub fn skip_comment(&mut self) {
+    loop {
+        if !matches!(self.curr_ch, b'\n') {
+            break;
+        }
+        self.read_ch()
+    }
+}
 
   fn keyword_or_identifier(&mut self) -> Token {
       let pos = self.pos;
@@ -103,12 +114,12 @@ impl Lexer {
           //         _ => Token::new(TokenKind::Ident, Some(s))
           //     }
           // }
-          // 3 => {
-          //     match s.as_str() {
-          //         //"let" => Token::new(TokenKind::Let, s),
-          //         _ => Token::new(TokenKind::Ident, s)
-          //     }
-          // }
+        3 => {
+            match s.as_str() {
+                "nil" => Token::new(TokenKind::Nil, Some(s)),
+                _ => Token::new(TokenKind::Symbol, Some(s))
+            }
+        }
           // 4 => {
           //     match s.as_str() {
           //         //"else" => Token::new(TokenKind::Else, s),
@@ -128,45 +139,56 @@ impl Lexer {
           //         _ => Token::new(TokenKind::Ident, s)
           //     }
           // }
-
-          _ => Token::new(TokenKind::Ident, Some(s))
+          _ => Token::new(TokenKind::Symbol, Some(s))
       }
+  }
+
+  fn string(&mut self) -> Token {
+    let mut buffer = String::new();
+    self.read_ch();
+    loop {
+        match self.curr_ch {
+            0 => return Token::new(TokenKind::Ilegal, None),
+            b'\"' => {
+                self.read_ch();
+                break;
+            }
+            b'\\' => {self.read_ch(); match self.curr_ch {
+                b'n' => {
+                    buffer.push('\n');
+                    self.read_ch();
+                    self.read_ch();
+                }
+                _ => {
+                    buffer.push(self.curr_ch as char);
+                    self.read_ch()
+                }
+            }},
+            b'\n' => return Token::new(TokenKind::Ilegal, None),
+            _ => {
+                buffer.push(self.curr_ch as char);
+                self.read_ch()
+            }
+        }
+    }
+    Token::new(TokenKind::String, Some(buffer))
   }
 
   pub fn next_token(&mut self) -> Token {
       self.skip_whitespace();
       let tok: Token =
       match self.curr_ch {
-          b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
-              self.keyword_or_identifier()
-          }
-          b'0'..=b'9' => {
-              self.number()
-          }
-          b'=' => Token::new(TokenKind::Equal, None),
-          // b'!' => {
-          //     if self.peek_ch() == b'=' {
-          //         Token::new(TokenKind::NotEqual, "==".to_string())
-          //     } else {
-          //         Token::new(TokenKind::Bang, "=".to_string())
-          //     }
-          // }
-          b'+' => Token::new(TokenKind::Plus, None),
-          b'-' => Token::new(TokenKind::Minus, None),
-          b'/' => Token::new(TokenKind::Slash, None),
-          b'*' => Token::new(TokenKind::Star, None),
-          //b'<' => Token::new(TokenKind::LessThan, None),
-          //b'>' => Token::new(TokenKind::GreaterThan, None),
-          //b';' => Token::new(TokenKind::SemiColon, None),
-          b',' => Token::new(TokenKind::Comma, None),
+          b'a'..=b'z' | b'A'..=b'Z' | b'_' => self.keyword_or_identifier(),
+          b'0'..=b'9' =>  self.number(),
           b'(' => Token::new(TokenKind::Lparen, None),
           b')' => Token::new(TokenKind::Rparen, None),
-          b'{' => Token::new(TokenKind::Lbracket, None),
-          b'}' => Token::new(TokenKind::Rbracket, None),
+          b'[' => Token::new(TokenKind::Lbracket, None),
+          b']' => Token::new(TokenKind::Rbracket, None),
+          b':' => todo!(), //Token::new(TokenKind::Colon, None), // TODO: macros
+          b';' => {self.skip_comment(); Token::new(TokenKind::Nil, None)},
+          b'"' => self.string(),
           0 => Token::new(TokenKind::EOF, None),
-          _ => {
-              Token::new(TokenKind::Illegal, Some(self.curr_ch.to_string()))
-          }
+          _ => Token::new(TokenKind::Symbol, Some((self.curr_ch as char).to_string()))
       };
       self.read_ch();
       tok
@@ -188,7 +210,7 @@ impl Iterator for Lexer {
 
     fn next(&mut self) -> Option<Self::Item> {
         let tok = self.next_token();
-        if tok.kind == TokenKind::Eof { return None; }
+        if tok.kind == TokenKind::EOF { return None; }
         return Some(tok);
     }
 }
@@ -204,12 +226,35 @@ fn read_form(r: &mut Peekable<Lexer>) -> MalResult {
         Some(t) => {
             match t.kind {
                 TokenKind::Lparen => read_list(r),
+                TokenKind::Lbracket => read_vec(r),
                 _ => read_atom(r)
             }
             
         },
-        None => Err(MalErr),
+        None => Err(MalErr(format!("Expected: Something found EOF"))),
     }
+}
+
+fn read_vec(r: &mut Peekable<Lexer>) -> MalResult {
+    let mut list: Vec<MalType> = Vec::new();
+    r.next();
+    loop {
+        match r.peek() {
+            Some(t) => {
+                match t.kind {
+                    TokenKind::Rbracket => break,
+                    _ => ()
+                }
+            },
+            None => return Err(MalErr(format!("Expected: List found EOF"))),
+        };
+        match read_form(r) {
+            Ok(ok) => list.push(ok),
+            Err(e) => return Err(e)
+        }
+    }
+    r.next();
+    Ok(MalType::Vector(Rc::from_iter(list)))
 }
 
 fn read_list(r: &mut Peekable<Lexer>) -> MalResult {
@@ -223,7 +268,7 @@ fn read_list(r: &mut Peekable<Lexer>) -> MalResult {
                     _ => ()
                 }
             },
-            None => return Err(MalErr),
+            None => return Err(MalErr(format!("Expected: List found EOF"))),
         };
         match read_form(r) {
             Ok(ok) => list.push(ok),
@@ -238,12 +283,15 @@ fn read_atom(r: &mut Peekable<Lexer>) -> MalResult {
     match r.next() {
         Some(t) => {
             match t.kind {
-                TokenKind::Ident => Ok(MalType::Symbol(Rc::from_iter(t.value.unwrap().bytes()))),
+                TokenKind::Symbol => Ok(MalType::Symbol(t.value.expect("Empyt symbol"))),
+                TokenKind::String => Ok(MalType::Str(t.value.expect("Empyt symbol"))),
                 TokenKind::Nil => Ok(MalType::Nil),
-                _ => Err(MalErr),
+                TokenKind::Number => Ok(MalType::Number(t.value.expect("Empty Number")
+                .parse::<f64>().expect("Error"))),
+                _ => Err(MalErr(format!("Unimplemented: {}", t))),
             }
         },
-        None => return Err(MalErr),
+        None => Err(MalErr(format!("Expected: atom found EOF"))),
     }
 }
 
