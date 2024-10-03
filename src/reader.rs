@@ -1,336 +1,305 @@
-use core::fmt;
-use std::{iter::Peekable, rc::Rc};
-use crate::mal_types::{MalResult, MalType, MalErr};
+use regex::Regex;
 
-#[derive(Debug)]
-#[derive(PartialEq)]
-pub enum TokenKind {
-    Colon,
-    Lparen,
-    Rparen,
-    Lbracket,
-    Rbracket,
-    String,
-    Number,
-    Bool,
-    Symbol,
-    Nil,
-    EOF,
-    Ilegal,
+use crate::mal_types::*;
+
+use std::collections::{BTreeMap, HashMap};
+
+macro_rules! consume_and_assert_eq {
+    ( $reader:expr, $expected:expr ) => {{
+        let token = $reader
+            .next()
+            .expect(&format!("Expected {:?} but got None!", &$expected));
+        if token != $expected {
+            panic!("Expected {:?} but got {:?}", &$expected, &token);
+        }
+    }};
 }
 
-#[derive(Debug)]
-pub struct Token {
-  kind: TokenKind,
-  value: Option<String>
+pub struct Reader {
+    tokens: Vec<String>,
+    position: usize,
 }
 
-impl fmt::Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(s) = &self.value {
-            write!(f, "{:?}({})", self.kind, s)
+impl Reader {
+    pub fn peek(&self) -> Option<String> {
+        if self.tokens.len() > self.position {
+            Some(self.tokens[self.position].to_owned())
         } else {
-            write!(f, "{:?}", self.kind)
+            None
+        }
+    }
+
+    pub fn next(&mut self) -> Option<String> {
+        if let Some(token) = self.peek() {
+            self.position += 1;
+            Some(token)
+        } else {
+            None
         }
     }
 }
-impl Token {
-    fn new(kind: TokenKind, value: Option<String>) -> Token {
-        Self { kind, value }
-    }
-}
 
-impl PartialEq for Token {
-    fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
-    }
-}
-
-pub struct Lexer {
-  input: Vec<u8>,
-  pos: usize,
-  read_pos: usize,
-  curr_ch: u8,
-}
-
-impl Lexer {
-  pub fn new(input: String) -> Self {
-      let mut lex = Self {
-          input: input.into_bytes(),
-          pos: 0,
-          read_pos: 0,
-          curr_ch: 0,
-      };
-      lex.read_ch();
-      lex
-  }
-  pub fn read_ch(&mut self) {
-      if self.read_pos >= self.input.len() {
-          self.curr_ch = 0
-      } else {
-          self.curr_ch = self.input[self.read_pos]
-      }
-      self.pos = self.read_pos;
-      self.read_pos += 1;
-  }
-  pub fn peek_ch(&mut self) -> u8 {
-      if self.read_pos >= self.input.len() {
-          return 0;
-      } else {
-          return self.input[self.read_pos];
-      }
-  }
-  pub fn skip_whitespace(&mut self) {
-      loop {
-          if !matches!(self.curr_ch, b' ' | b'\t' | b'\n' | b'\r') {
-              break;
-          }
-          self.read_ch()
-      }
-  }
-  pub fn skip_comment(&mut self) {
-    loop {
-        if !matches!(self.curr_ch, b'\n') {
-            break;
-        }
-        self.read_ch()
-    }
-}
-
-  fn keyword_or_identifier(&mut self) -> Token {
-      let pos = self.pos;
-      loop {
-          if matches!(self.curr_ch, b'a'..=b'z' | b'A'..=b'Z' | b'_') {
-              self.read_ch(); continue;
-          }
-          break;
-      }
-      let s = String::from_utf8_lossy(&self.input[pos..self.pos]).into_owned();
-      match s.len() {
-          // 2 => {
-          //     match s.as_str() {
-          //         //"fn" => Token::new(TokenKind::Function, s),
-          //         //"if" => Token::new(TokenKind::If, s),
-          //         _ => Token::new(TokenKind::Ident, Some(s))
-          //     }
-          // }
-        3 => {
-            match s.as_str() {
-                "nil" => Token::new(TokenKind::Nil, Some(s)),
-                _ => Token::new(TokenKind::Symbol, Some(s))
-            }
-        }
-          // 4 => {
-          //     match s.as_str() {
-          //         //"else" => Token::new(TokenKind::Else, s),
-          //         //"true" => Token::new(TokenKind::True, s),
-          //         _ => Token::new(TokenKind::Ident, s)
-          //     }
-          // }
-          // 5 => {
-          //     match s.as_str() {
-          //         //"false" => Token::new(TokenKind::False, s),
-          //         _ => Token::new(TokenKind::Ident, s)
-          //     }
-          // }
-          // 6 => {
-          //     match s.as_str() {
-          //         //"return" => Token::new(TokenKind::Return, s),
-          //         _ => Token::new(TokenKind::Ident, s)
-          //     }
-          // }
-          _ => Token::new(TokenKind::Symbol, Some(s))
-      }
-  }
-
-  fn string(&mut self) -> Token {
-    let mut buffer = String::new();
-    self.read_ch();
-    loop {
-        match self.curr_ch {
-            0 => return Token::new(TokenKind::Ilegal, None),
-            b'\"' => {
-                self.read_ch();
-                break;
-            }
-            b'\\' => {self.read_ch(); match self.curr_ch {
-                b'n' => {
-                    buffer.push('\n');
-                    self.read_ch();
-                    self.read_ch();
-                }
-                _ => {
-                    buffer.push(self.curr_ch as char);
-                    self.read_ch()
-                }
-            }},
-            b'\n' => return Token::new(TokenKind::Ilegal, None),
-            _ => {
-                buffer.push(self.curr_ch as char);
-                self.read_ch()
-            }
-        }
-    }
-    Token::new(TokenKind::String, Some(buffer))
-  }
-
-  pub fn next_token(&mut self) -> Token {
-      self.skip_whitespace();
-      let tok: Token =
-      match self.curr_ch {
-          b'a'..=b'z' | b'A'..=b'Z' | b'_' => self.keyword_or_identifier(),
-          b'0'..=b'9' =>  self.number(),
-          b'(' => Token::new(TokenKind::Lparen, None),
-          b')' => Token::new(TokenKind::Rparen, None),
-          b'[' => Token::new(TokenKind::Lbracket, None),
-          b']' => Token::new(TokenKind::Rbracket, None),
-          b':' => todo!(), //Token::new(TokenKind::Colon, None), // TODO: macros
-          b';' => {self.skip_comment(); Token::new(TokenKind::Nil, None)},
-          b'"' => self.string(),
-          0 => Token::new(TokenKind::EOF, None),
-          _ => Token::new(TokenKind::Symbol, Some((self.curr_ch as char).to_string()))
-      };
-      self.read_ch();
-      tok
-  }
-
-  fn number(&mut self) -> Token {
-      let pos: usize = self.pos;
-      while matches!(self.curr_ch, b'0'..=b'9') {
-          self.read_ch();
-      }
-      self.read_pos -= 1;
-      Token::new(TokenKind::Number, Some(String::from_utf8_lossy(&self.input[pos..self.pos]).into_owned()))
-  }
-
-}
-
-impl Iterator for Lexer {
-    type Item = Token;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let tok = self.next_token();
-        if tok.kind == TokenKind::EOF { return None; }
-        return Some(tok);
-    }
-}
-
-
-pub fn read_str(s: String) -> MalResult {
-    let mut reader = Lexer::new(s).peekable();
+pub fn read_str(code: &str) -> MalResult {
+    let tokens = tokenizer(code);
+    let mut reader = Reader {
+        tokens: tokens,
+        position: 0,
+    };
     read_form(&mut reader)
 }
 
-fn read_form(r: &mut Peekable<Lexer>) -> MalResult {
-    match r.peek() {
-        Some(t) => {
-            match t.kind {
-                TokenKind::Lparen => read_list(r),
-                TokenKind::Lbracket => read_vec(r),
-                _ => read_atom(r)
+const TOKEN_MATCH: &str = r#"[\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"|;.*|[^\s\[\]{}('"`,;)]*)"#;
+
+fn tokenizer(code: &str) -> Vec<String> {
+    let re = Regex::new(TOKEN_MATCH).unwrap();
+    let mut tokens: Vec<String> = vec![];
+    for token_match in re.captures_iter(code) {
+        tokens.push(token_match[1].to_string());
+    }
+    tokens
+}
+
+fn read_form(reader: &mut Reader) -> MalResult {
+    let token = reader.peek().unwrap();
+    if token.len() == 0 {
+        return Err(MalError("Unexpected EOF".to_string()));
+    }
+    let mut chars = token.chars();
+    match chars.next().unwrap() {
+        ';' => {
+            reader.next();
+            Err(MalError("".to_string()))
+        }
+        '(' => read_list(reader),
+        '[' => read_vector(reader),
+        '"' => read_string(reader),
+        ':' => read_keyword(reader),
+        '\'' => read_quote(reader, "quote"),
+        '~' => {
+            if let Some('@') = chars.next() {
+                read_quote(reader, "splice-unquote")
+            } else {
+                read_quote(reader, "unquote")
             }
-            
-        },
-        None => Err(MalErr(format!("Expected: Something found EOF"))),
+        }
+        '`' => read_quote(reader, "quasiquote"),
+        '@' => read_quote(reader, "deref"),
+        _ => read_atom(reader),
     }
 }
 
-fn read_vec(r: &mut Peekable<Lexer>) -> MalResult {
-    let mut list: Vec<MalType> = Vec::new();
-    r.next();
+fn read_string(reader: &mut Reader) -> MalResult {
+    let token = reader.next().unwrap();
+    let mut chars = token.chars();
+    if chars.next().unwrap() != '"' {
+        panic!("Expected start of a string!")
+    }
+    let mut str = String::new();
     loop {
-        match r.peek() {
-            Some(t) => {
-                match t.kind {
-                    TokenKind::Rbracket => break,
-                    _ => ()
-                }
-            },
-            None => return Err(MalErr(format!("Expected: List found EOF"))),
-        };
-        match read_form(r) {
-            Ok(ok) => list.push(ok),
-            Err(e) => return Err(e)
+        match chars.next() {
+            Some('"') => break,
+            Some('\\') => str.push(unescape_char(chars.next())?),
+            Some(c) => str.push(c),
+            None => return Err(MalError("Unexpected end of string!".to_string())),
         }
     }
-    r.next();
-    Ok(MalType::Vector(Rc::from_iter(list)))
+    Ok(MalType::Str(str))
 }
 
-fn read_list(r: &mut Peekable<Lexer>) -> MalResult {
+fn read_keyword(reader: &mut Reader) -> MalResult {
+    let token = reader.next().unwrap();
+    Ok(MalType::Keyword(token[1..].to_string()))
+}
+
+fn read_quote(reader: &mut Reader, expanded: &str) -> MalResult {
+    reader.next().unwrap();
+    let value = read_form(reader).unwrap();
+    let list = MalType::MalList(vec![MalType::Symbol(expanded.to_string()), value].into());
+    Ok(list)
+}
+
+fn unescape_char(char: Option<char>) -> Result<char, MalError> {
+    match char {
+        Some('n') => Ok('\n'),
+        Some(c) => Ok(c),
+        None => Err(MalError("Unexpected end of string!".to_string())),
+    }
+}
+
+fn read_list(reader: &mut Reader) -> MalResult {
+    consume_and_assert_eq!(reader, "(");
+    let list = read_list_inner(reader, ")")?;
+    Ok(MalType::MalList(list.into()))
+}
+
+fn read_vector(reader: &mut Reader) -> MalResult {
+    consume_and_assert_eq!(reader, "[");
+    let list = read_list_inner(reader, "]")?;
+    Ok(MalType::Vector(list.into()))
+}
+
+fn read_list_inner(reader: &mut Reader, close: &str) -> Result<Vec<MalType>, MalError> {
     let mut list: Vec<MalType> = Vec::new();
-    r.next();
     loop {
-        match r.peek() {
-            Some(t) => {
-                match t.kind {
-                    TokenKind::Rparen => break,
-                    _ => ()
-                }
-            },
-            None => return Err(MalErr(format!("Expected: List found EOF"))),
-        };
-        match read_form(r) {
-            Ok(ok) => list.push(ok),
-            Err(e) => return Err(e)
+        if let Some(token) = reader.peek() {
+            if token == close {
+                reader.next();
+                break;
+            }
+            match read_form(reader) {
+                Err(MalError(e)) if e.is_empty() => {}
+                Err(other) => return Err(other),
+                Ok(form) => list.push(form),
+            }
+        } else {
+            return Err(MalError("EOF while reading list".to_string()));
         }
     }
-    r.next();
-    Ok(MalType::MalList(Rc::from_iter(list)))
+    Ok(list)
 }
 
-fn read_atom(r: &mut Peekable<Lexer>) -> MalResult {
-    match r.next() {
-        Some(t) => {
-            match t.kind {
-                TokenKind::Symbol => Ok(MalType::Symbol(t.value.expect("Empyt symbol"))),
-                TokenKind::String => Ok(MalType::Str(t.value.expect("Empyt symbol"))),
-                TokenKind::Nil => Ok(MalType::Nil),
-                TokenKind::Number => Ok(MalType::Number(t.value.expect("Empty Number")
-                .parse::<f64>().expect("Error"))),
-                _ => Err(MalErr(format!("Unimplemented: {}", t))),
-            }
-        },
-        None => Err(MalErr(format!("Expected: atom found EOF"))),
-    }
+const NUMBER_MATCH: &str = r#"^\-?[\d\.]+$"#;
+
+fn read_atom(reader: &mut Reader) -> MalResult {
+    let token = reader.next().unwrap();
+    let num_re = Regex::new(NUMBER_MATCH).unwrap();
+    let value = if num_re.is_match(&token) {
+        MalType::Number(token.parse::<i64>().unwrap_or(0))
+    } else {
+        match token.as_ref() {
+            "nil" => MalType::Nil,
+            "true" => MalType::Bool(true),
+            "false" => MalType::Bool(false),
+            _ => MalType::Symbol(token),
+        }
+    };
+    Ok(value)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::reader::{Token, Lexer, TokenKind};
-
-    use super::read_str;
+    use super::*;
 
     #[test]
-    fn it_works() {
-        let line = String::from("(");
-        let mut lex = Lexer::new(line);
-        assert_eq!(Some(Token {kind: TokenKind::Lparen, value: None}),lex.next());
-        println!("{:?}", lex.next());
-        println!("{:?}", lex.next());
+    fn test_tokenizer() {
+        let code = "(+ 2 (* 3 4))";
+        let tokens = tokenizer(code);
+        assert_eq!(
+            tokens,
+            vec![
+                "(".to_string(),
+                "+".to_string(),
+                "2".to_string(),
+                "(".to_string(),
+                "*".to_string(),
+                "3".to_string(),
+                "4".to_string(),
+                ")".to_string(),
+                ")".to_string(),
+            ]
+        );
     }
 
     #[test]
-    fn test_lex() {
-      let ipt = String::from("(1)");
-      let mut lex = Lexer::new(ipt);
-      assert_eq!(Some(Token {kind: TokenKind::Lparen, value: None}),lex.next());
-      assert_eq!(Some(Token {kind: TokenKind::Number, value: Some("1".to_string())}), lex.next());
-      assert_eq!(Some(Token {kind: TokenKind::Rparen, value: None}),lex.next());
-
+    fn test_read_str() {
+        let code = "(nil true false :foo \"string\" (+ 2 (* 3 4)))";
+        let ast = read_str(code).unwrap();
+        assert_eq!(
+            ast,
+            MalType::MalList(
+                vec![
+                    MalType::Nil,
+                    MalType::Bool(true),
+                    MalType::Bool(false),
+                    MalType::Keyword("foo".to_string()),
+                    MalType::Str("string".to_string()),
+                    MalType::MalList(
+                        vec![
+                            MalType::Symbol("+".to_string()),
+                            MalType::Number(2),
+                            MalType::MalList(
+                                vec![
+                                    MalType::Symbol("*".to_string()),
+                                    MalType::Number(3),
+                                    MalType::Number(4),
+                                ]
+                                .into()
+                            ),
+                        ]
+                        .into()
+                    ),
+                ]
+                .into()
+            )
+        );
     }
+
     #[test]
-    fn read_from_test() {
-      let ipt = String::from("(1)");
-      assert!(read_str(ipt).is_ok());
-      let ipt = String::from("+");
-      assert!(read_str(ipt).is_ok());
-      let ipt = String::from("()");
-      assert!(read_str(ipt).is_ok());
-      let ipt = String::from("(())");
-      assert!(read_str(ipt).is_ok());
-      let ipt = String::from("(");
-      assert!(read_str(ipt).is_err());
+    fn test_read_vector() {
+        let code = "[1 :foo nil]";
+        let ast = read_str(code).unwrap();
+        assert_eq!(
+            ast,
+            MalType::Vector(
+                vec![
+                    MalType::Number(1),
+                    MalType::Keyword("foo".to_string()),
+                    MalType::Nil,
+                ]
+                .into()
+            )
+        );
     }
 
+    // #[test]
+    // fn test_hash_map() {
+    //     let code = "{:foo 1 \"bar\" [2 3]}";
+    //     let ast = read_str(code).unwrap();
+    //     let mut map = BTreeMap::new();
+    //     map.insert(MalType::keyword("foo"), MalType::number(1));
+    //     map.insert(
+    //         MalType::string("bar"),
+    //         MalType::vector(vec![MalType::number(2), MalType::number(3)]),
+    //     );
+    //     assert_eq!(ast, MalType::hashmap(map));
+    // }
+
+    #[test]
+    fn test_unclosed_string() {
+        let code = "\"abc";
+        let err = read_str(code).unwrap_err();
+        assert_eq!(err, MalError("Unexpected EOF".to_string()));
+    }
+
+    // #[test]
+    // fn test_quote() {
+    //     let code = "('foo ~bar `baz ~@fuz @buz)";
+    //     let ast = read_str(code).unwrap();
+    //     assert_eq!(
+    //         ast,
+    //         MalType::list(vec![
+    //             MalType::list(vec![MalType::symbol("quote"), MalType::symbol("foo")]),
+    //             MalType::list(vec![MalType::symbol("unquote"), MalType::symbol("bar")]),
+    //             MalType::list(vec![MalType::symbol("quasiquote"), MalType::symbol("baz")]),
+    //             MalType::list(vec![
+    //                 MalType::symbol("splice-unquote"),
+    //                 MalType::symbol("fuz"),
+    //             ]),
+    //             MalType::list(vec![MalType::symbol("deref"), MalType::symbol("buz")]),
+    //         ])
+    //     );
+    // }
+
+    #[test]
+    fn test_comment() {
+        let code = "; comment";
+        let err = read_str(code).unwrap_err();
+        assert_eq!(err, MalError("".to_string()));
+        let code = "[1] ; comment";
+        let ast = read_str(code).unwrap();
+        assert_eq!(ast, MalType::Vector(vec![MalType::Number(1)].into()));
+        let code = "\"str\" ; comment";
+        let ast = read_str(code).unwrap();
+        assert_eq!(ast, MalType::Str("str".to_string()));
+    }
 }

@@ -1,16 +1,36 @@
-use std::rc::Rc;
+use core::fmt;
+use std::{cmp, rc::Rc};
 
-#[derive(Clone, Debug)]
+use crate::printer;
+
+#[derive(Clone, PartialEq, Eq)]
 pub enum MalType {
     MalList(Rc<[MalType]>),
     Vector(Rc<[MalType]>),
     Symbol(String),
+    Keyword(String),
     Str(String),
-    Number(f64),
-    Nil
+    Number(i64),
+    Bool(bool),
+    Nil,
 }
 
-#[derive(Debug)]
-pub struct MalErr(pub(crate) String);
+impl MalType {
+    pub fn is_list(&self) -> bool {
+        match self {
+            MalType::MalList(_) => true,
+            _ => false,
+        }
+    }
+}
 
-pub type MalResult = Result<MalType, MalErr>;
+impl fmt::Debug for MalType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", printer::pr_str(self))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct MalError(pub(crate) String);
+
+pub type MalResult = Result<MalType, MalError>;

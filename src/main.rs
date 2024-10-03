@@ -1,55 +1,76 @@
 #![allow(unused)]
 
-mod reader;
-mod printer;
+mod mal_env;
 mod mal_types;
+mod printer;
+mod reader;
 
+use std::{env, fs};
+
+use mal_types::MalType;
 use rustyline::error::ReadlineError;
-use rustyline::{DefaultEditor, Result};
+use rustyline::Editor;
 
-use crate::mal_types::{MalResult,MalErr};
-use crate::reader::read_str;
+use crate::mal_types::{MalError, MalResult};
 use crate::printer::pr_str;
+use crate::reader::read_str;
 
-fn read(s: String) -> MalResult {
-    read_str(s)
-}
-fn eval(s: MalResult) -> MalResult {s}
-fn print(s: MalResult) -> String {
-    match s {
-        Ok(ok) => pr_str(ok),
-        Err(e) => format!("{}", e.0),
-    }
-    
-}
-
-fn rep(s: String) -> String {
-    print(eval(read(s)))
-}
-
-
-fn main() -> Result<()> {
-    let mut rl = DefaultEditor::new()?;
-    loop {
-        let readline = rl.readline(">> ");
-        match readline {
-            Ok(line) => {
-                println!("Line: {}", rep(line));
+fn main() {
+    let mut args = env::args();
+    let program = args.next().expect("ok");
+    if let Some(filepath) = args.next() {
+        match fs::read_to_string(&filepath) {
+            Ok(data) => match run(format!("(module {} )", data)) {
+                Ok(out) => println!("{}", out),
+                Err(e) => eprintln!("Error: {:?}", e),
             },
-            Err(ReadlineError::Interrupted) => {
-                println!("CTRL-C");
-                break
-            },
-            Err(ReadlineError::Eof) => {
-                println!("CTRL-D");
-                break
-            },
-            Err(err) => {
-                println!("Error: {:?}", err);
-                break
-            }
+            Err(err) => eprintln!("Error: Cannot read file `{filepath}`.\n{err}"),
         }
+    } else {
+        usage(program);
     }
-
-    Ok(())
 }
+
+fn usage(program: String) {
+    println!("Usage: {program} <file.cor>");
+}
+
+fn run(s: String) -> Result<String, MalError> {
+    let ast = read_str(&s)?;
+    let exp = eval_ast(ast)?;
+    Ok(pr_str(&exp))
+}
+
+fn eval_ast(ast: MalType) -> MalResult {
+    todo!()
+}
+
+// fn repl() {
+//     let mut rl = Editor::<(), rustyline::history::DefaultHistory>::new().unwrap();
+//     if rl.load_history(".mal-history").is_err() {
+//         eprintln!("No previous history.");
+//     }
+//
+//     loop {
+//         let readline = rl.readline("user> ");
+//         match readline {
+//             Ok(line) => {
+//                 let _ = rl.add_history_entry(&line);
+//                 rl.save_history(".mal-history").unwrap();
+//                 if !line.is_empty() {
+//                     match rep(line) {
+//                         Ok(out) => println!("{:?}", out),
+//                         Err(e) => eprintln!("Error: {:?}", e),
+//                     }
+//                 }
+//             }
+//             Err(ReadlineError::Interrupted) => continue,
+//             Err(ReadlineError::Eof) => break,
+//             Err(err) => {
+//                 println!("Error: {:?}", err);
+//                 break;
+//             }
+//         }
+//     }
+// }
+//
